@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+    <!--Open-Meteo API & LAT: 28.37, LON: 75.60 & hourly=relativehumidity_2m-->>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BioSense | Adaptive Telemetry</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        /* THEME VARIABLES */
+        :root {
+            --bg-color: #050505;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --accent-cyan: #00f3ff;
+            --accent-blue: #3b82f6;
+            --glass-bg: rgba(10, 15, 30, 0.90);
+            --border-color: rgba(0, 243, 255, 0.15);
+            --scanline-opacity: 0.3;
+        }
+
+        /* LIGHT THEME OVERRIDES */
+        [data-theme="light"] {
+            --bg-color: #f0f4f8;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --accent-cyan: #0891b2; /* Darker cyan for white bg */
+            --accent-blue: #2563eb;
+            --glass-bg: rgba(255, 255, 255, 0.85);
+            --border-color: rgba(8, 145, 178, 0.2);
+            --scanline-opacity: 0.05;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            font-family: 'Rajdhani', sans-serif;
+            overflow-x: hidden;
+            transition: background-color 0.5s ease, color 0.5s ease;
+        }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .text-sec { color: var(--text-secondary); }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-color); }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+        /* Glassmorphism */
+        .cyber-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--border-color);
+            backdrop-filter: blur(12px);
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+        .cyber-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; width: 2px; height: 100%;
+            background: var(--accent-cyan);
+            opacity: 0.7;
+        }
+        .cyber-card.alert::before { background: #ff003c; box-shadow: 0 0 15px #ff003c; }
+        .cyber-card.charging::before { background: #facc15; box-shadow: 0 0 15px #facc15; }
+        .cyber-card.fallback::before { background: #facc15; box-shadow: 0 0 15px #facc15; }
+
+        /* Input Styling */
+        .cyber-input {
+            background: rgba(0,0,0,0.1);
+            border: 1px solid var(--text-secondary);
+            color: var(--accent-cyan);
+            font-family: 'JetBrains Mono', monospace;
+            transition: all 0.3s ease;
+        }
+        .cyber-input:focus {
+            border-color: var(--accent-cyan);
+            outline: none;
+            box-shadow: 0 0 8px rgba(0, 243, 255, 0.2);
+        }
+        
+        /* Select Styling */
+        .cyber-select {
+            background: rgba(0,0,0,0.1);
+            border: 1px solid var(--text-secondary);
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+        [data-theme="light"] .cyber-input, [data-theme="light"] .cyber-select {
+            background: rgba(255,255,255,0.5);
+            color: #0f172a;
+        }
+
+        /* Scanlines */
+        .scanlines {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.1));
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 50;
+            opacity: var(--scanline-opacity);
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 0;
+            pointer-events: none;
+        }
+        .ui-layer { position: relative; z-index: 10; }
+        .modal-overlay { background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(4px); }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col relative" data-theme="dark">
+
+    <!-- Background Effects -->
+    <div class="scanlines"></div>
+    <div id="canvas-container"></div>
+
+    <!-- CONFIG MODAL -->
+    <div id="config-modal" class="hidden fixed inset-0 z-[100] modal-overlay flex items-center justify-center px-4">
+        <div class="cyber-card max-w-lg w-full p-8 rounded-lg shadow-2xl border border-gray-700">
+            <h3 class="text-2xl font-bold font-mono mb-2 flex items-center gap-2" style="color: var(--text-primary)">
+                <span style="color: var(--accent-cyan)">></span> SYSTEM CONFIGURATION
+            </h2>
+            <p class="text-xs mb-6 text-sec font-mono">CONFIGURE TELEMETRY & INTERFACE PROTOCOLS</p>
+            
+            <div class="space-y-6">
+                <!-- API Section -->
+                <div>
+                    <label class="block text-xs font-mono text-sec mb-1 uppercase">Data Stream URL</label>
+                    <input type="text" id="api-url-input" 
+                        placeholder="http://..." 
+                        class="cyber-input w-full px-4 py-3 rounded text-sm">
+                    <div class="mt-2 flex items-center gap-2 p-2 bg-blue-900/20 border border-blue-900/30 rounded text-blue-400 text-[10px] font-mono">
+                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <span>Auto-Parser Active: Will find data anywhere in JSON.</span>
+                    </div>
+                </div>
+
+                <!-- Visuals Section -->
+                <div>
+                    <label class="block text-xs font-mono text-sec mb-1 uppercase">Interface Theme</label>
+                    <select id="theme-select" class="cyber-select w-full px-4 py-3 rounded text-sm outline-none">
+                        <option value="auto">SYSTEM DEFAULT (Day/Night Auto)</option>
+                        <option value="dark">DARK MODE (Cyberpunk)</option>
+                        <option value="light">LIGHT MODE (Clinical Lab)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="mt-8 flex justify-end gap-4">
+                <button onclick="toggleConfig()" class="px-4 py-2 text-sm font-mono text-sec hover:text-white transition-colors">CANCEL</button>
+                <button onclick="saveConfig()" class="px-6 py-2 bg-cyan-900/40 hover:bg-cyan-500/20 border border-cyan-500/50 font-mono text-sm rounded transition-all shadow-[0_0_15px_rgba(0,243,255,0.2)]" style="color: var(--accent-cyan)">
+                     APPLY CHANGES 
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <header class="ui-layer w-full border-b border-gray-800 bg-black/10 backdrop-blur-md sticky top-0 transition-all" style="border-color: var(--border-color)">
+        <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="relative">
+                    <div class="w-3 h-3 rounded-full animate-pulse shadow-[0_0_10px_#00f3ff]" style="background-color: var(--accent-cyan)"></div>
+                </div>
+                <h1 class="text-2xl font-bold tracking-widest uppercase bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-600">
+                    BIOSENSE <span class="text-xs text-sec font-mono tracking-normal align-top ml-1">v7.0 ADAPTIVE</span>
+                </h1>
+            </div>
+            
+            <div class="flex items-center gap-6">
+                <div class="font-mono text-xs text-sec hidden sm:block">
+                    LATENCY: <span id="latency-val" style="color: var(--accent-cyan)">--ms</span>
+                </div>
+                <button onclick="toggleConfig()" class="flex items-center gap-2 px-3 py-1.5 border hover:border-cyan-500 rounded text-xs font-mono text-sec transition-all group" style="border-color: var(--border-color)">
+                    CONFIG SYS
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Interface -->
+    <main class="ui-layer flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        <!-- Left Column: Sensor Modules -->
+        <div class="lg:col-span-4 space-y-6">
+            
+            <!-- Status Module -->
+            <div class="cyber-card rounded-lg p-4" id="status-card">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-sec text-xs font-mono uppercase tracking-wider">Network Status</h3>
+                    <div id="net-indicator" class="px-2 py-0.5 rounded text-[10px] font-bold bg-green-900 text-green-400 font-mono border border-green-800">INITIALIZING</div>
+                </div>
+                <div class="font-mono text-xs text-cyan-700 break-all" id="current-source">
+                    AWAITING_HANDSHAKE...
+                </div>
+            </div>
+            
+            <!-- 1. POWER MODULE -->
+            <div class="cyber-card rounded-lg p-5" id="battery-card">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-sec text-xs font-mono uppercase tracking-wider">HOST POWER RAIL</h3>
+                    <div id="batt-indicator" class="px-2 py-0.5 rounded text-[10px] font-bold bg-gray-800 text-gray-400 font-mono border border-gray-700">SCANNING</div>
+                </div>
+                
+                <div class="flex items-end justify-between mt-2">
+                    <div>
+                        <div class="flex items-baseline gap-1">
+                            <span id="batt-level" class="text-4xl font-bold" style="color: var(--text-primary)">--</span>
+                            <span class="text-sm text-sec">%</span>
+                        </div>
+                        <div class="text-[10px] font-mono text-sec mt-1" id="batt-state">ACPI_DRIVER_INIT...</div>
+                    </div>
+                    <!-- Battery Icon -->
+                    <div class="relative h-10 w-6 border-2 rounded-sm p-0.5 flex flex-col justify-end mb-1" style="border-color: var(--text-secondary)">
+                        <div class="absolute -top-1.5 left-1.5 w-2 h-1" style="background-color: var(--text-secondary)"></div>
+                        <div id="batt-fill" class="w-full bg-gray-500 h-0 transition-all duration-1000"></div>
+                        <svg id="charge-icon" class="hidden absolute inset-0 m-auto w-4 h-4 text-white drop-shadow-md" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"></path></svg>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Temperature Module -->
+            <div class="cyber-card rounded-lg p-6 group hover:shadow-[0_0_20px_rgba(0,243,255,0.1)] transition-all">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <h2 class="text-sec text-sm font-mono tracking-widest">THERMAL CORE</h2>
+                        <div class="flex items-baseline gap-2 mt-1">
+                            <span id="temp-val" class="text-5xl font-bold tabular-nums" style="color: var(--text-primary)">--</span>
+                            <span class="text-xl" style="color: var(--accent-cyan)">°C</span>
+                        </div>
+                    </div>
+                    <div class="relative">
+                         <div class="absolute inset-0 blur opacity-20 rounded-full animate-pulse" style="background-color: var(--accent-cyan)"></div>
+                         <svg class="w-8 h-8 relative z-10" style="color: var(--accent-cyan)" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    </div>
+                </div>
+                <div class="w-full bg-gray-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                    <div id="temp-bar" class="h-full bg-gradient-to-r from-cyan-600 via-cyan-400 to-white w-0 transition-all duration-500 ease-out"></div>
+                </div>
+                <p id="temp-msg" class="mt-3 text-[10px] font-mono text-sec">CALIBRATING...</p>
+            </div>
+
+            <!-- 3. Humidity Module -->
+            <div class="cyber-card rounded-lg p-6 group hover:shadow-[0_0_20px_rgba(59,130,246,0.1)] transition-all">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <h2 class="text-sec text-sm font-mono tracking-widest">SATURATION</h2>
+                        <div class="flex items-baseline gap-2 mt-1">
+                            <span id="hum-val" class="text-5xl font-bold tabular-nums" style="color: var(--text-primary)">--</span>
+                            <span class="text-xl" style="color: var(--accent-blue)">%</span>
+                        </div>
+                    </div>
+                    <svg class="w-8 h-8" style="color: var(--accent-blue)" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                </div>
+                <div class="w-full bg-gray-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                    <div id="hum-bar" class="h-full bg-gradient-to-r from-blue-600 via-blue-400 to-white w-0 transition-all duration-500 ease-out"></div>
+                </div>
+                <p class="mt-3 text-[10px] font-mono text-sec">SENSOR ID: AMB_02</p>
+            </div>
+        </div>
+
+        <!-- Center/Right -->
+        <div class="lg:col-span-8 flex flex-col gap-6">
+            
+            <!-- 3D Viewport -->
+            <div class="cyber-card h-64 flex flex-col items-center justify-center border-dashed bg-black/10 relative" style="border-color: var(--border-color)">
+                <div class="absolute top-4 left-4 flex flex-col gap-1">
+                    <div class="w-16 h-[1px]" style="background-color: var(--accent-cyan)"></div>
+                    <div class="text-[10px] font-mono text-sec">TWIN RENDER CTX</div>
+                </div>
+                <div class="absolute bottom-4 right-4 flex flex-col items-end gap-1">
+                    <div class="text-[10px] font-mono text-sec">PARTICLE COUNT: 3000</div>
+                    <div class="w-16 h-[1px]" style="background-color: var(--accent-cyan)"></div>
+                </div>
+                
+                <div class="text-center pointer-events-none z-20">
+                    <h3 class="text-2xl font-bold tracking-wide drop-shadow-lg" style="color: var(--text-primary)">DIGITAL TWIN</h3>
+                    <p class="font-mono text-xs tracking-widest uppercase px-2 rounded" style="color: var(--accent-cyan); background: rgba(0,0,0,0.3)">Realtime Neural Mapping</p>
+                </div>
+            </div>
+
+            <!-- Chart -->
+            <div class="cyber-card rounded-lg p-4 flex-1 flex flex-col min-h-[350px]">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-sec text-sm font-mono uppercase flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-sm" style="background-color: var(--accent-cyan)"></span> 
+                        Telemetry History
+                    </h3>
+                    <div class="flex gap-4 text-[10px] font-mono">
+                        <span class="flex items-center gap-1" style="color: var(--accent-cyan)"><div class="w-2 h-1" style="background-color: var(--accent-cyan)"></div> TEMP</span>
+                        <span class="flex items-center gap-1" style="color: var(--accent-blue)"><div class="w-2 h-1" style="background-color: var(--accent-blue)"></div> HUMIDITY</span>
+                    </div>
+                </div>
+                <div class="relative flex-1 w-full">
+                    <canvas id="mainChart"></canvas>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <script>
+        // --- GLOBAL STATE & THEME ---
+        let DATA_SOURCE = localStorage.getItem('biosense_api') || ""; 
+        let USER_THEME = localStorage.getItem('biosense_theme') || "auto";
+        let IS_SIMULATION = true;
+        let simTemp = 28; 
+        let simHum = 45;
+        let isAlert = false;
+        const PILANI_LAT = 28.37;
+        const PILANI_LON = 75.60;
+        let geoFetched = false;
+
+        // --- THEME MANAGER ---
+        function applyTheme() {
+            const body = document.body;
+            const select = document.getElementById('theme-select');
+            const hour = new Date().getHours();
+            
+            let finalTheme = USER_THEME;
+            if (USER_THEME === 'auto') {
+                // 6AM to 6PM = Light, else Dark
+                finalTheme = (hour >= 6 && hour < 18) ? 'light' : 'dark';
+            }
+
+            body.setAttribute('data-theme', finalTheme);
+            if (select) select.value = USER_THEME; // Update dropdown to match stored pref
+            
+            // Update Chart Colors dynamically
+            // Check if chart exists AND if scales exist to prevent crash
+            if(window.mainChart && window.mainChart.options && window.mainChart.options.scales) {
+                const isLight = finalTheme === 'light';
+                const gridColor = isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)';
+                const tickColor = isLight ? '#64748b' : '#00f3ff';
+                
+                if(window.mainChart.options.scales.y) {
+                    window.mainChart.options.scales.y.grid.color = gridColor;
+                    window.mainChart.options.scales.y.ticks.color = tickColor;
+                }
+                if(window.mainChart.options.scales.x) {
+                    window.mainChart.options.scales.x.ticks.color = tickColor;
+                }
+                window.mainChart.update('none'); // Update without animation
+            }
+        }
+        // Call applyTheme immediately to set CSS variables for body, 
+        // but chart update inside it will be skipped safely because mainChart is undefined yet
+        applyTheme(); 
+
+        // --- HELPER: ROBUST JSON PARSER (FIND KEY RECURSIVELY) ---
+        function findValueInObject(obj, keyCandidates) {
+            // Base case: if obj is not an object, return null
+            if (typeof obj !== 'object' || obj === null) return null;
+
+            // 1. Check direct keys first
+            for (let key of keyCandidates) {
+                if (obj.hasOwnProperty(key)) return parseFloat(obj[key]);
+            }
+
+            // 2. If not found, recursively check values
+            for (let prop in obj) {
+                if (obj.hasOwnProperty(prop) && typeof obj[prop] === 'object') {
+                    const result = findValueInObject(obj[prop], keyCandidates);
+                    if (result !== null) return result;
+                }
+            }
+            return null;
+        }
+
+
+        // --- HARDWARE BATTERY ---
+        async function initBatteryMonitor() {
+            try {
+                const battery = await navigator.getBattery();
+                function updateBattery() {
+                    const level = Math.round(battery.level * 100);
+                    const charging = battery.charging;
+                    
+                    document.getElementById('batt-level').innerText = level;
+                    document.getElementById('batt-fill').style.height = level + "%";
+                    const indicator = document.getElementById('batt-indicator');
+                    const card = document.getElementById('battery-card');
+                    const icon = document.getElementById('charge-icon');
+                    const stateText = document.getElementById('batt-state');
+                    const fill = document.getElementById('batt-fill');
+                    
+                    if(charging) {
+                        indicator.innerText = "CHARGING AC";
+                        indicator.className = "px-2 py-0.5 rounded text-[10px] font-bold bg-yellow-900 text-yellow-400 font-mono border border-yellow-800 animate-pulse";
+                        card.classList.add('charging');
+                        icon.classList.remove('hidden');
+                        fill.className = "w-full h-0 transition-all duration-1000 bg-yellow-400";
+                        stateText.innerText = "AC POWER DETECTED";
+                        stateText.className = "text-[10px] font-mono mt-1 text-yellow-500";
+                    } else {
+                        card.classList.remove('charging');
+                        icon.classList.add('hidden');
+                        if(level > 20) {
+                            indicator.innerText = "BATTERY_OK";
+                            indicator.className = "px-2 py-0.5 rounded text-[10px] font-bold bg-green-900 text-green-400 font-mono border border-green-800";
+                            fill.className = "w-full h-0 transition-all duration-1000 bg-green-500";
+                            stateText.innerText = "DISCHARGING_NORMAL";
+                            stateText.className = "text-[10px] font-mono mt-1 text-sec";
+                        } else {
+                            indicator.innerText = "LOW_POWER";
+                            indicator.className = "px-2 py-0.5 rounded text-[10px] font-bold bg-red-900 text-red-400 font-mono border border-red-800 animate-pulse";
+                            fill.className = "w-full h-0 transition-all duration-1000 bg-red-500";
+                            stateText.innerText = "WARNING: LOW_VOLTAGE";
+                            stateText.className = "text-[10px] font-mono mt-1 text-red-500";
+                        }
+                    }
+                }
+                updateBattery();
+                battery.addEventListener('levelchange', updateBattery);
+                battery.addEventListener('chargingchange', updateBattery);
+            } catch (e) {
+                document.getElementById('batt-state').innerText = "DRIVER_NOT_FOUND";
+            }
+        }
+        initBatteryMonitor();
+
+        // --- THREE.JS ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050505, 0.02); // Fog adapts to bg in real app, but hardcoded dark here for consistency
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        const particleCount = 3000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const originalPositions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+        
+        // Particle Colors
+        const colorCore = new THREE.Color(0x00f3ff);
+        const colorOuter = new THREE.Color(0x0044ff);
+        const colorAlert = new THREE.Color(0xff003c);
+
+        for (let i = 0; i < particleCount; i++) {
+            const r = 9 * Math.cbrt(Math.random());
+            const theta = Math.random() * 2 * Math.PI;
+            const phi = Math.acos(2 * Math.random() - 1);
+            const x = r * Math.sin(phi) * Math.cos(theta);
+            const y = r * Math.sin(phi) * Math.sin(theta);
+            const z = r * Math.cos(phi);
+            positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
+            originalPositions[i * 3] = x; originalPositions[i * 3 + 1] = y; originalPositions[i * 3 + 2] = z;
+            const mixedColor = colorCore.clone().lerp(colorOuter, Math.random());
+            colors[i * 3] = mixedColor.r; colors[i * 3 + 1] = mixedColor.g; colors[i * 3 + 2] = mixedColor.b;
+        }
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        const material = new THREE.PointsMaterial({ size: 0.12, vertexColors: true, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
+        const particles = new THREE.Points(geometry, material);
+        scene.add(particles);
+        
+        // Grid Floor
+        const grid = new THREE.GridHelper(60, 60, 0x112233, 0x050505);
+        grid.position.y = -12; scene.add(grid);
+        camera.position.z = 18; camera.position.y = 5; camera.lookAt(0,0,0);
+
+        let mouseX = 0, mouseY = 0;
+        document.addEventListener('mousemove', (e) => { mouseX = (e.clientX - window.innerWidth / 2) * 0.0005; mouseY = (e.clientY - window.innerHeight / 2) * 0.0005; });
+        window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+            particles.rotation.y += 0.001; particles.rotation.x += (mouseY - particles.rotation.x) * 0.05; particles.rotation.y += (mouseX - particles.rotation.y) * 0.05;
+            const pulseFreq = isAlert ? 3.0 : 1.0; const pulseAmp = isAlert ? 0.5 : 0.1;
+            const pos = particles.geometry.attributes.position.array; const orig = originalPositions; const cols = particles.geometry.attributes.color.array;
+            for(let i = 0; i < particleCount; i++) {
+                const idx = i * 3;
+                const scale = 1 + Math.sin(time * pulseFreq + i) * pulseAmp;
+                pos[idx] = orig[idx] * scale; pos[idx+1] = orig[idx+1] * scale; pos[idx+2] = orig[idx+2] * scale;
+                if(isAlert) {
+                   pos[idx] += (Math.random() - 0.5) * 0.2; pos[idx+1] += (Math.random() - 0.5) * 0.2; pos[idx+2] += (Math.random() - 0.5) * 0.2;
+                   cols[idx] = THREE.MathUtils.lerp(cols[idx], colorAlert.r, 0.1);
+                   cols[idx+1] = THREE.MathUtils.lerp(cols[idx+1], colorAlert.g, 0.1);
+                   cols[idx+2] = THREE.MathUtils.lerp(cols[idx+2], colorAlert.b, 0.1);
+                } else {
+                    if(cols[idx] > colorCore.r) cols[idx] -= 0.01;
+                    if(cols[idx+1] < colorCore.g) cols[idx+1] += 0.01;
+                }
+            }
+            particles.geometry.attributes.position.needsUpdate = true; particles.geometry.attributes.color.needsUpdate = true;
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // --- CHART ---
+        const ctx = document.getElementById('mainChart').getContext('2d');
+        const gradTemp = ctx.createLinearGradient(0,0,0,300); gradTemp.addColorStop(0, 'rgba(0, 243, 255, 0.4)'); gradTemp.addColorStop(1, 'rgba(0, 243, 255, 0)');
+        const gradHum = ctx.createLinearGradient(0,0,0,300); gradHum.addColorStop(0, 'rgba(59, 130, 246, 0.3)'); gradHum.addColorStop(1, 'rgba(59, 130, 246, 0)');
+        const bufferLength = 20;
+
+        // Cleanup previous instance to avoid errors
+        if (window.mainChart instanceof Chart) {
+            window.mainChart.destroy();
+        }
+
+        window.mainChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels: Array(bufferLength).fill(''), datasets: [
+                { label: 'Temperature (°C)', data: Array(bufferLength).fill(null), borderColor: '#00f3ff', backgroundColor: gradTemp, borderWidth: 2, tension: 0.4, fill: true, pointRadius: 0, pointHoverRadius: 4, yAxisID: 'y' },
+                { label: 'Humidity (%)', data: Array(bufferLength).fill(null), borderColor: '#3b82f6', backgroundColor: gradHum, borderWidth: 2, tension: 0.4, fill: true, pointRadius: 0, yAxisID: 'y1' }
+            ]},
+            options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false } }, scales: {
+                x: { grid: { display: false }, ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 } } },
+                y: { type: 'linear', display: true, position: 'left', grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#00f3ff', font: { family: 'JetBrains Mono' } }, min: 0, max: 60 },
+                y1: { type: 'linear', display: true, position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#3b82f6', font: { family: 'JetBrains Mono' } }, min: 0, max: 100 }
+            }, animation: { duration: 0 } }
+        });
+        
+        // Re-apply theme after chart is created to ensure colors match the current theme
+        applyTheme();
+
+        // --- CONFIG ---
+        const configModal = document.getElementById('config-modal');
+        const apiInput = document.getElementById('api-url-input');
+        const themeSelect = document.getElementById('theme-select');
+        
+        if(DATA_SOURCE) { apiInput.value = DATA_SOURCE; IS_SIMULATION = false; }
+
+        function toggleConfig() { configModal.classList.toggle('hidden'); }
+        function saveConfig() {
+            const url = apiInput.value.trim();
+            const theme = themeSelect.value;
+            
+            // Save Theme
+            USER_THEME = theme;
+            localStorage.setItem('biosense_theme', theme);
+            applyTheme();
+
+            // Save API
+            DATA_SOURCE = url;
+            const sourceText = document.getElementById('current-source');
+            if(url) {
+                localStorage.setItem('biosense_api', url); IS_SIMULATION = false;
+                sourceText.innerText = "SOURCE: EXT_API [" + url.substring(0, 25) + "..." + "]";
+                sourceText.className = "font-mono text-xs text-cyan-500 break-all";
+            } else {
+                localStorage.removeItem('biosense_api'); IS_SIMULATION = true;
+                geoFetched = false;
+                sourceText.innerText = "SOURCE: GEO-LOCALIZED SIMULATION";
+                sourceText.className = "font-mono text-xs text-cyan-700 break-all";
+            }
+            toggleConfig();
+        }
+
+        // --- WEATHER FETCH (PILANI & GEO) ---
+        async function fetchWeather(lat, lon, isFallback = false) {
+             try {
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=relativehumidity_2m`;
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if(data.current_weather) {
+                    simTemp = data.current_weather.temperature;
+                    if(data.hourly && data.hourly.relativehumidity_2m) {
+                        const now = new Date();
+                        const currentHour = now.toISOString().slice(0, 13) + ":00";
+                        const hourIndex = data.hourly.time.indexOf(currentHour);
+                        simHum = (hourIndex !== -1) ? data.hourly.relativehumidity_2m[hourIndex] : data.hourly.relativehumidity_2m[0];
+                    } else { simHum = 45; }
+
+                    geoFetched = true;
+                    const locName = isFallback ? "BASE_STATION: PILANI" : `GEO_LIVE [${lat.toFixed(2)}, ${lon.toFixed(2)}]`;
+                    const sourceText = document.getElementById('current-source');
+                    
+                    sourceText.innerText = "SOURCE: " + locName;
+                    sourceText.className = "font-mono text-xs break-all " + (isFallback ? "text-yellow-500" : "text-green-500");
+                    
+                    if(isFallback) {
+                        document.getElementById('net-indicator').innerText = "FAILOVER ACTIVE";
+                        document.getElementById('net-indicator').className = "px-2 py-0.5 rounded text-[10px] font-bold bg-yellow-900 text-yellow-400 font-mono border border-yellow-800 animate-pulse";
+                        document.getElementById('status-card').classList.add('fallback');
+                    } else {
+                        document.getElementById('net-indicator').innerText = "SAT_LINK_OK";
+                        document.getElementById('net-indicator').className = "px-2 py-0.5 rounded text-[10px] font-bold bg-green-900 text-green-400 font-mono border border-green-800";
+                        document.getElementById('status-card').classList.remove('fallback');
+                    }
+                }
+            } catch(e) { console.log("Weather Fetch Error", e); }
+        }
+
+// ---------------- PASTE YOUR NEW CODE HERE ----------------
+function fetchRealLocalWeather() {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                console.log("GPS Success:", pos.coords.latitude, pos.coords.longitude);
+                fetchWeather(pos.coords.latitude, pos.coords.longitude, false);
+            },
+            (err) => {
+                let errorMsg = "";
+                switch(err.code) {
+                    case err.PERMISSION_DENIED: errorMsg = "User blocked location access."; break;
+                    case err.POSITION_UNAVAILABLE: errorMsg = "GPS signal not found."; break;
+                    case err.TIMEOUT: errorMsg = "Location request timed out."; break;
+                    default: errorMsg = "Unknown error.";
+                }
+                alert("Location Failed: " + errorMsg + "\nSwitching to System Default (Pilani).");
+                console.warn("Geolocation Error (" + err.code + "): " + errorMsg);
+                fetchWeather(PILANI_LAT, PILANI_LON, true);
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+    } else {
+        alert("Geolocation not supported by this browser.");
+        fetchWeather(PILANI_LAT, PILANI_LON, true);
+    }
+}
+// ---------------- END OF PASTE ----------------
+
+// ... rest of code (fetchTelemetry function) ...
+
+        // --- FETCH & PARSE ---
+        async function fetchTelemetry() {
+            const timestamp = new Date().toLocaleTimeString('en-US', {hour12:false});
+            let t = null, h = null;
+            let useFallback = false;
+
+            if (!IS_SIMULATION) {
+                try {
+                    const start = performance.now();
+                    const controller = new AbortController();
+                    setTimeout(() => controller.abort(), 2000);
+                    const response = await fetch(DATA_SOURCE, { signal: controller.signal });
+                    const json = await response.json();
+                    const latency = Math.round(performance.now() - start);
+                    document.getElementById('latency-val').innerText = latency + "ms";
+
+                    // *** ROBUST PARSING ***
+                    // Try to find ANY key resembling temperature or humidity
+                    t = findValueInObject(json, ['temperature', 'temp', 'field1', 't', 'val1']);
+                    h = findValueInObject(json, ['humidity', 'hum', 'field2', 'h', 'val2']);
+
+                    if (t === null) t = 0; 
+                    if (h === null) h = 0;
+
+                    document.getElementById('current-source').innerText = "SOURCE: EXT_API_STREAM";
+                    document.getElementById('current-source').className = "font-mono text-xs text-cyan-500 break-all";
+                    document.getElementById('status-card').classList.remove('fallback');
+                    document.getElementById('net-indicator').innerText = "CONNECTED";
+                    document.getElementById('net-indicator').className = "px-2 py-0.5 rounded text-[10px] font-bold bg-green-900 text-green-400 font-mono border border-green-800";
+                } catch (err) { useFallback = true; }
+            }
+
+            if (IS_SIMULATION || useFallback) {
+                if(!geoFetched) {
+                    if(useFallback) fetchWeather(PILANI_LAT, PILANI_LON, true);
+                    else fetchRealLocalWeather();
+                }
+                simTemp += (Math.random() - 0.5) * 0.3; 
+                simHum += (Math.random() - 0.5) * 0.8;
+                t = simTemp; h = simHum;
+                
+                if(useFallback) {
+                     const sourceText = document.getElementById('current-source');
+                     sourceText.innerText = "SIGNAL LOSS: REVERTING TO BASE (PILANI)";
+                     sourceText.className = "font-mono text-xs text-red-500 break-all animate-pulse";
+                     document.getElementById('net-indicator').innerText = "FAILOVER_ACTIVE";
+                     document.getElementById('net-indicator').className = "px-2 py-0.5 rounded text-[10px] font-bold bg-yellow-900 text-yellow-400 font-mono border border-yellow-800 animate-pulse";
+                }
+                document.getElementById('latency-val').innerText = Math.floor(Math.random() * 20 + 5) + "ms";
+            }
+
+            updateDashboard(t, h, timestamp);
+        }
+
+        function updateDashboard(temp, hum, time) {
+            const tVal = parseFloat(temp).toFixed(1);
+            const hVal = Math.round(hum);
+            
+            document.getElementById('temp-val').innerText = tVal;
+            document.getElementById('hum-val').innerText = hVal;
+
+            document.getElementById('temp-bar').style.width = (tVal / 60 * 100) + "%";
+            document.getElementById('hum-bar').style.width = hVal + "%";
+
+            const tempModule = document.getElementById('temp-msg').parentElement.parentElement;
+            
+            if (tVal > 35) {
+                isAlert = true;
+                document.getElementById('temp-msg').innerText = "CRITICAL THRESHOLD EXCEEDED";
+                document.getElementById('temp-msg').className = "text-[10px] font-mono text-red-500 animate-pulse";
+                tempModule.classList.add('alert');
+            } else {
+                isAlert = false;
+                document.getElementById('temp-msg').innerText = "NORMAL OPERATION";
+                document.getElementById('temp-msg').className = "text-[10px] font-mono text-sec";
+                tempModule.classList.remove('alert');
+            }
+            
+            const d = mainChart.data;
+            if (d.labels.length >= bufferLength) { d.labels.shift(); d.datasets[0].data.shift(); d.datasets[1].data.shift(); }
+            d.labels.push(time); d.datasets[0].data.push(tVal); d.datasets[1].data.push(hVal);
+            mainChart.update();
+        }
+
+        setInterval(fetchTelemetry, 2000);
+        fetchTelemetry();
+    </script>
+</body>
+</html>
