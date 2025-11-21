@@ -386,55 +386,81 @@
         }
 
 
-        // --- HARDWARE BATTERY ---
-        async function initBatteryMonitor() {
-            try {
-                const battery = await navigator.getBattery();
-                function updateBattery() {
-                    const level = Math.round(battery.level * 100);
-                    const charging = battery.charging;
-                    
-                    document.getElementById('batt-level').innerText = level;
-                    document.getElementById('batt-fill').style.height = level + "%";
-                    const indicator = document.getElementById('batt-indicator');
-                    const card = document.getElementById('battery-card');
-                    const icon = document.getElementById('charge-icon');
-                    const stateText = document.getElementById('batt-state');
-                    const fill = document.getElementById('batt-fill');
-                    
-                    if(charging) {
-                        indicator.innerText = "CHARGING AC";
-                        indicator.className = "px-2 py-0.5 rounded text-[10px] font-bold bg-yellow-900 text-yellow-400 font-mono border border-yellow-800 animate-pulse";
-                        card.classList.add('charging');
-                        icon.classList.remove('hidden');
-                        fill.className = "w-full h-0 transition-all duration-1000 bg-yellow-400";
-                        stateText.innerText = "AC POWER DETECTED";
-                        stateText.className = "text-[10px] font-mono mt-1 text-yellow-500";
-                    } else {
-                        card.classList.remove('charging');
-                        icon.classList.add('hidden');
-                        if(level > 20) {
-                            indicator.innerText = "BATTERY_OK";
-                            indicator.className = "px-2 py-0.5 rounded text-[10px] font-bold bg-green-900 text-green-400 font-mono border border-green-800";
-                            fill.className = "w-full h-0 transition-all duration-1000 bg-green-500";
-                            stateText.innerText = "DISCHARGING_NORMAL";
-                            stateText.className = "text-[10px] font-mono mt-1 text-sec";
-                        } else {
-                            indicator.innerText = "LOW_POWER";
-                            indicator.className = "px-2 py-0.5 rounded text-[10px] font-bold bg-red-900 text-red-400 font-mono border border-red-800 animate-pulse";
-                            fill.className = "w-full h-0 transition-all duration-1000 bg-red-500";
-                            stateText.innerText = "WARNING: LOW_VOLTAGE";
-                            stateText.className = "text-[10px] font-mono mt-1 text-red-500";
-                        }
-                    }
-                }
-                updateBattery();
-                battery.addEventListener('levelchange', updateBattery);
-                battery.addEventListener('chargingchange', updateBattery);
-            } catch (e) {
-                document.getElementById('batt-state').innerText = "DRIVER_NOT_FOUND";
-            }
+// ---------------- PASTE THIS TO REPLACE OLD BATTERY FUNCTION ----------------
+async function initBatteryMonitor() {
+    const card = document.getElementById('battery-card');
+    const levelEl = document.getElementById('batt-level');
+    const fill = document.getElementById('batt-fill');
+    const indicator = document.getElementById('batt-indicator');
+    const stateText = document.getElementById('batt-state');
+    const icon = document.getElementById('charge-icon');
+    
+    // Manual Override State
+    let manualOverride = false;
+    let isCharging = false;
+    let currentLevel = 100;
+
+    // 1. Helper to update UI
+    function updateDisplay(charging, level) {
+        levelEl.innerText = level;
+        fill.style.height = level + "%";
+        
+        if(charging) {
+            indicator.innerText = "CHARGING AC";
+            indicator.className = "px-2 py-0.5 rounded text-[10px] font-bold bg-yellow-900 text-yellow-400 font-mono border border-yellow-800 animate-pulse";
+            card.classList.add('charging');
+            icon.classList.remove('hidden');
+            fill.className = "w-full h-0 transition-all duration-1000 bg-yellow-400";
+            stateText.innerText = "AC POWER DETECTED";
+            stateText.className = "text-[10px] font-mono mt-1 text-yellow-500";
+        } else {
+            card.classList.remove('charging');
+            icon.classList.add('hidden');
+            indicator.innerText = "BATTERY_OK";
+            indicator.className = "px-2 py-0.5 rounded text-[10px] font-bold bg-green-900 text-green-400 font-mono border border-green-800";
+            fill.className = "w-full h-0 transition-all duration-1000 bg-green-500";
+            stateText.innerText = "DISCHARGING_NORMAL";
+            stateText.className = "text-[10px] font-mono mt-1 text-sec";
         }
+    }
+
+    // 2. Try to get real data
+    try {
+        const battery = await navigator.getBattery();
+        
+        // Initial Load
+        isCharging = battery.charging;
+        currentLevel = Math.round(battery.level * 100);
+        updateDisplay(isCharging, currentLevel);
+
+        // Real Listener
+        battery.addEventListener('chargingchange', () => {
+            if(!manualOverride) updateDisplay(battery.charging, Math.round(battery.level * 100));
+        });
+        battery.addEventListener('levelchange', () => {
+            if(!manualOverride) updateDisplay(battery.charging, Math.round(battery.level * 100));
+        });
+
+    } catch (e) {
+        stateText.innerText = "DRIVER_NOT_FOUND";
+        currentLevel = 85; // Fake level if driver fails
+        updateDisplay(false, 85);
+    }
+
+    // 3. THE SAVER: Click to Toggle (Manual Override)
+    card.style.cursor = "pointer";
+    card.addEventListener('click', () => {
+        manualOverride = true; // Stop listening to the lying API
+        isCharging = !isCharging; // Toggle State
+        
+        // Shake effect to show it worked
+        card.style.transform = "scale(0.98)";
+        setTimeout(() => card.style.transform = "scale(1)", 100);
+
+        updateDisplay(isCharging, currentLevel);
+    });
+}
+// ---------------- END OF NEW FUNCTION ----------------
         initBatteryMonitor();
 
         // --- THREE.JS ---
